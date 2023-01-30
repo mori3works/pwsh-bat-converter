@@ -19,6 +19,12 @@ if ($DestinationFile -eq [string]::Empty) {
 
 $ESC_NEWLINE = " ^";
 $ESC_DQUOTE = '`"';
+$DUP_DQUOTE = '""';
+$DUP_SQUOTE = "''";
+$NL = '([Environment]::NewLine)';
+$DQ = '[char]0x22';
+$CR = '[char]0x0d';
+$LF = '[char]0x0a';
 
 $PAT_BEGIN_HEREDOC = '@"$';
 $PAT_END_HEREDOC = '^"@';
@@ -37,10 +43,12 @@ foreach($line in (Get-Content -Path $SourceFile)) {
     # エスケープが必要な記号はエスケープする
     $line = $line.Replace("|", "^|");
     $line = $line.Replace(">", "^>");
+    $line = $line.Replace("%", "%%");
 
     # TODO:
     # - ヒアドキュメントでもダブルクォート文字列中でも、エスケープ文字がそのままになってしまっている。
-    #   ex. `$ => `$
+    # - 変数展開
+    # - クォート文字重ね
 
     # ヒアドキュメントの処理
     # ヒアドキュメントは対応していないので、すべて1列の文字列に置き換える
@@ -48,7 +56,7 @@ foreach($line in (Get-Content -Path $SourceFile)) {
         if ($line -match $PAT_END_HEREDOC) {
             $inHereDoc = $false;
             Write-Debug -Message "Exit here-document";
-            $line = $prefixHereDoc + $bufHereDoc.ToString() + ($line -replace @($PAT_END_HEREDOC, [string]::Empty));
+            $line = $prefixHereDoc + '(' + $bufHereDoc.ToString() + ')' + ($line -replace @($PAT_END_HEREDOC, [string]::Empty));
             if (!($line -match ';\s*$')) {
                 $line += ";";
             }
@@ -57,10 +65,15 @@ foreach($line in (Get-Content -Path $SourceFile)) {
             # ヒアドキュメントの最初の行だけ直前に改行が入らない
             # それ以外の行は改行文字を変換し結合する
             if (!$firstInHereDoc) {
-                [void]$bufHereDoc.Append(' + ([Environment]::NewLine) + ');
+                [void]$bufHereDoc.Append(' + ' + $NL + ' + ');
             }
             # エスケープされているダブルクォートを変換する
-            $line = $line -replace @($ESC_DQUOTE, ("' + [char]0x22 + '"));
+            $line = $line -replace @($ESC_DQUOTE, ("' + " + $DQ + " + '"));
+            # エスケープされている文字のエスケープを解除する
+            $line = $line.Replace('``', '`');
+            $line = $line.Replace('`$', '$');
+            $line = $line.Replace('`n', ("' + " + $LF + " + '"));
+            $line = $line.Replace('`r', ("' + " + $CR + " + '"));
             # 文字列をクォートし、くっつける
             $line = "'" + $line + "'";
             [void]$bufHereDoc.Append($line);
@@ -82,7 +95,16 @@ foreach($line in (Get-Content -Path $SourceFile)) {
             # エスケープされたダブルクォートを変換する
             $m = ([regex]$PAT_DQUOTED_STRING).Match($line);
             if (!($m.Success)) { break; }
-            $qstr = "'" + ($m.Groups[1].Value.Replace($ESC_DQUOTE, ("' + [char]0x22 + '"))) + "'";
+            $qstr = "'" + ($m.Groups[1].Value.Replace($ESC_DQUOTE, ("' + " + $DQ + " + '"))) + "'";
+            # TODO: 重ねられたダブルクォートの処理
+            # 最初のRegexでおそらく切り出されてしまっている
+            #$qstr = $qstr.Replace($DUP_DQUOTE, ("' + " + $DQ + " + '"));
+            #$qstr = $qstr.Replace($DUP_SQUOTE, ("' + " + $DQ + " + '"));
+            # エスケープされている文字のエスケープを解除する
+            $qstr = $qstr.Replace('``', '`');
+            $qstr = $qstr.Replace('`$', '$');
+            $qstr = $qstr.Replace('`n', ("' + " + $LF + " + '"));
+            $qstr = $qstr.Replace('`r', ("' + " + $CR + " + '"));
 
             # 末尾と先頭にシングルクォートをつける
             $line = $line.Replace($m.Groups[0].Value, $qstr);
