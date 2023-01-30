@@ -1,12 +1,14 @@
 Param(
-    [Parameter(Mandatory = $true)]
-    [string] $Message
+    [Parameter(Mandatory = $false)]
+    [string] $Message = [string]::Empty
 );
 
 Set-PSDebug -Strict;
 
 Add-Type -AssemblyName "System.Windows.Forms";
-[Windows.Forms.MessageBox]::Show($Message) | Out-Null;
+if ($Message -ne [string]::Empty) {
+    [Windows.Forms.MessageBox]::Show($Message) | Out-Null;
+}
 
 $intVar = 48;
 

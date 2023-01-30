@@ -23,12 +23,13 @@ $DUP_DQUOTE = '""';
 $DUP_SQUOTE = "''";
 $NL = '([Environment]::NewLine)';
 $DQ = '[char]0x22';
+$SQ = '[char]0x27';
 $CR = '[char]0x0d';
 $LF = '[char]0x0a';
 
 $PAT_BEGIN_HEREDOC = '@"$';
 $PAT_END_HEREDOC = '^"@';
-$PAT_DQUOTED_STRING = '"(((?<=`)"|[^"])*)"';
+$PAT_DQUOTED_STRING = '"(((?<!`)""|(?<=`)"|[^"])*)"';
 
 $builder = [Text.StringBuilder]::New();
 [void]$builder.AppendLine("@ECHO OFF");
@@ -67,8 +68,9 @@ foreach($line in (Get-Content -Path $SourceFile)) {
             if (!$firstInHereDoc) {
                 [void]$bufHereDoc.Append(' + ' + $NL + ' + ');
             }
-            # エスケープされているダブルクォートを変換する
+            # ヒアドキュメント中のダブルクォートはエスケープはするが重ねはそのまま評価され、通常の文字とは少々扱いがことなるためここで処理する
             $line = $line -replace @($ESC_DQUOTE, ("' + " + $DQ + " + '"));
+            $line = $line.Replace('"', ("' + " + $DQ + " + '"));
             # エスケープされている文字のエスケープを解除する
             $line = $line.Replace('``', '`');
             $line = $line.Replace('`$', '$');
@@ -89,27 +91,31 @@ foreach($line in (Get-Content -Path $SourceFile)) {
             continue;
         }
 
-        # ダブルクォートの処理
+        # ダブルクォートで括られた文字列の処理
         # 文字列チャンクを切り出し、チャンクの先頭と末尾のダブルクォートをシングルクォートに変換する
-        for(;;) {
-            # エスケープされたダブルクォートを変換する
+        for (;;) {
             $m = ([regex]$PAT_DQUOTED_STRING).Match($line);
             if (!($m.Success)) { break; }
+
+            # エスケープされたダブルクォートを変換
+            # 末尾と先頭にシングルクォートをつける
             $qstr = "'" + ($m.Groups[1].Value.Replace($ESC_DQUOTE, ("' + " + $DQ + " + '"))) + "'";
-            # TODO: 重ねられたダブルクォートの処理
-            # 最初のRegexでおそらく切り出されてしまっている
-            #$qstr = $qstr.Replace($DUP_DQUOTE, ("' + " + $DQ + " + '"));
-            #$qstr = $qstr.Replace($DUP_SQUOTE, ("' + " + $DQ + " + '"));
+            # 重ねられたシングルクォートの処理
+            #$qstr = $qstr.Replace($DUP_SQUOTE, ("' + " + $SQ + " + '"));
+            # 重ねられたダブルクォートの処理
+            $qstr = $qstr.Replace($DUP_DQUOTE, ("' + " + $DQ + " + '"));
             # エスケープされている文字のエスケープを解除する
             $qstr = $qstr.Replace('``', '`');
             $qstr = $qstr.Replace('`$', '$');
             $qstr = $qstr.Replace('`n', ("' + " + $LF + " + '"));
             $qstr = $qstr.Replace('`r', ("' + " + $CR + " + '"));
 
-            # 末尾と先頭にシングルクォートをつける
             $line = $line.Replace($m.Groups[0].Value, $qstr);
         }
     }
+
+    # 末尾にセミコロンがなかった場合付与
+    if ($line -match '}(?!\s*;\s*)$') { $line = $line + ";" }
 
     # 末尾にキャレット
     $line = $line + $ESC_NEWLINE;
