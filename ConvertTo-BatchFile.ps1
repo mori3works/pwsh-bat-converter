@@ -46,11 +46,6 @@ foreach($line in (Get-Content -Path $SourceFile)) {
     $line = $line.Replace(">", "^>");
     $line = $line.Replace("%", "%%");
 
-    # TODO:
-    # - ヒアドキュメントでもダブルクォート文字列中でも、エスケープ文字がそのままになってしまっている。
-    # - 変数展開
-    # - クォート文字重ね
-
     # ヒアドキュメントの処理
     # ヒアドキュメントは対応していないので、すべて1列の文字列に置き換える
     if ($inHereDoc) {
