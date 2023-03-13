@@ -7,7 +7,7 @@ Param(
 );
 
 Set-PSDebug -Strict;
-#$DebugPreference = "Continue";
+$DebugPreference = "Continue";
 
 if (!(Test-Path -Path $SourceFile)) {
     Write-Error -Message ("Source file '{}' is not readable." -F $SourceFile);
@@ -26,10 +26,15 @@ $DQ = '[char]0x22';
 $SQ = '[char]0x27';
 $CR = '[char]0x0d';
 $LF = '[char]0x0a';
+$HS = '[char]0x23';
 
 $PAT_BEGIN_HEREDOC = '@"$';
 $PAT_END_HEREDOC = '^"@';
 $PAT_DQUOTED_STRING = '"(((?<!`)""|(?<=`)"|[^"])*)"';
+
+$PAT_SIMPLE_COMMENT = '^([^#]*)(?<!<)#(?!>)(.*)$';
+$PAT_QUOTED_HASH = "(`"|')((#|(?<!`)`"`"|(?<=`)`"|[^`"])*)(`"|')";
+$PAT_QUOTED_STRING = '("(((?<!)""|(?<=`)"|[^"])*)"|''((''''|[^''])*)'')';
 
 $builder = [Text.StringBuilder]::New();
 [void]$builder.AppendLine("@ECHO OFF");
@@ -40,10 +45,56 @@ $firstInHereDoc = $false;
 $prefixHereDoc = [string]::Empty;
 $bufHereDoc = [Text.StringBuilder]::New();
 foreach($line in (Get-Content -Path $SourceFile)) {
+    # TODO: 
+    #$h = <# #> 0; #---
+
+    # 文字列に#が含まれる行は扱いが複雑になるので、いったん#を置換する
+    # ヒアドキュメント中はいったん対象外
+    if (($m = ([regex]$PAT_QUOTED_STRING).Matches($line)).Success -and ($m.Groups[2].Value -match "#" -or $m.Groups[4].Value -match "#")) {
+        if ($m.Groups[2].Value -ne [string]::Empty) {
+            $q = $m.Groups[2].Value.Replace("#", '" + ' + $HS + ' + "');
+            $s = $m.Groups[2].Index;
+            $e = $s + $m.Groups[2].Length;
+        } else {
+            $q = $m.Groups[4].Value.Replace("#", "' + " + $HS + " + '");
+            $s = $m.Groups[4].Index;
+            $e = $s + $m.Groups[4].Length;
+        }
+        $line = $line.SubString(0, $s) + $q + $line.SubString($e);
+    }
+
+    # #が途中から出た場合、シンプルなコメントとみなし、<##>で括る
+    if ($line -match $PAT_SIMPLE_COMMENT) {
+        $m = ([regex]$PAT_SIMPLE_COMMENT).Matches($line);
+        if (!($m.Success)) { ; } else {
+            $c = $m.Groups[2].Value;
+            if ($c.Length -gt 1 -and $c[0] -eq ' ') {
+                $c = $c + ' ';
+            }
+            # 改行直後に^<#がくると正しく解釈されないので頭にスペースを足す
+            if ($m.Groups[1].Value -eq [string]::Empty) {
+                $line = " <#" + $c + "#>";
+            } else {
+                $line = $m.Groups[1].Value + "; <#" + $c + "#>"
+            }
+            Write-Debug -Message ")) $line";
+        }
+
+        #for (;;) {
+        #    $m = ([regex]$PAT_QUOTED_HASH).Match($l);
+        #    if (!($m.Success)) { break; }
+        #    Write-Host -Object $m;
+        #    Start-Sleep 1;
+        #    $s = $l.Replace($m.Groups[2].Value, [string]::Empty);
+        #    $l = $l.Replace($m.Groups[0].Value, $s);
+        #
+        #Write-Debug -Message "#-- $l";
+    }
 
     # エスケープが必要な記号はエスケープする
     $line = $line.Replace("|", "^|");
     $line = $line.Replace(">", "^>");
+    $line = $line.Replace("<", "^<");
     $line = $line.Replace("%", "%%");
 
     # ヒアドキュメントの処理
@@ -61,8 +112,11 @@ foreach($line in (Get-Content -Path $SourceFile)) {
             # ヒアドキュメントの最初の行だけ直前に改行が入らない
             # それ以外の行は改行文字を変換し結合する
             if (!$firstInHereDoc) {
-                [void]$bufHereDoc.Append(' + ' + $NL + ' + ');
+                [void]$bufHereDoc.Append(' + ' + $NL + ' + ^');
+                [void]$bufHereDoc.Append([Environment]::NewLine);
             }
+            # シングルクォートも重なると厄介なので変換する
+            $line = $line.Replace("'", ("' + " + $SQ + " + '"));
             # ヒアドキュメント中のダブルクォートはエスケープはするが重ねはそのまま評価され、通常の文字とは少々扱いがことなるためここで処理する
             $line = $line -replace @($ESC_DQUOTE, ("' + " + $DQ + " + '"));
             $line = $line.Replace('"', ("' + " + $DQ + " + '"));

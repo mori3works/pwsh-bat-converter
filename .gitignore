@@ -1,3 +1,6 @@
 *.swp
 ps1.txt
 bat.txt
+tmp/
+.venv/
+!.gitkeep
